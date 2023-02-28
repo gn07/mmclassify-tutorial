@@ -1,28 +1,49 @@
+from tokenize import String
 from typing import Optional
 import os
 from fastapi import FastAPI, File, UploadFile
-from mmcv import Config, DictAction
-from mmcls.apis import init_model, inference_model
+import torch
+from torch import nn
+from torchvision import models
+from PIL import Image
+import numpy as np
 from inference import inference_model
-import mmcv
+import uvicorn
+
 
 app = FastAPI()
 
-cfg = Config.fromfile(
-    'mmclassification/configs/shufflenet_v2/shufflenet_v2_1x_b64x16_linearlr_bn_nowd_imagenet.py')
-model = init_model(cfg,'model.pth')
-if (os.getenv('MODEL') != None) and (os.getenv('MODEL')=='food101'):
-    cfg.model.head.num_classes = 101
-    model.CLASSES = []
-    with open('classes.txt') as f:
-        for x in f.readlines():
-            model.CLASSES.append(x[:-1])
+# upload model file here
+model = models.mobilenet_v2(pretrained=True)
+num_ftrs = model.classifier[1].in_features
+# Alternatively, it can be generalized to nn.Linear(num_ftrs, len(class_names)).
+model.classifier[1] = nn.Linear(num_ftrs, 101)
+device = torch.device("cpu")
+model = model.to(device)
+model.load_state_dict(torch.load('food_model.pt', map_location=device))
+with open('classes.txt') as f:
+    classes = f.read().splitlines()
 
 @app.get("/")
-def read_root():
-    return {"Hello": "World"}
+async def read_root():
+    try:
+        return {"Message": "Hellow World"}
+    except Exception as e:
+        return {"Unknown Error": str(e)}
 
 @app.post("/predict")
-def predict(file:bytes = File(...)):
-    img = mmcv.imfrombytes(file)
-    return inference_model(model,img)
+async def predict(file: Optional[bytes] = File(None)):
+    if file:
+        results = inference_model(model,file, classes)
+        print(results)
+        return {
+            'Message': 'Success',
+            'Results': results,
+            'File Size': len(file)
+        }
+    else:
+        return {
+            'Message': 'No file uploaded'
+        }
+if __name__ == "__main__":
+    uvicorn.run(app, host="127.0.0.1", port=8000)
